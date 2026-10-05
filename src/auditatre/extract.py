@@ -38,6 +38,30 @@ POLO_RE = re.compile(
 )
 TELEFONE_RE = re.compile(r"\(?\d{2}\)?\s*\d{4,5}-?\d{4}")
 CEP_RE = re.compile(r"\b\d{5}-?\d{3}\b")
+PENALIDADE_RE = re.compile(
+    r"\b(impedimento(?:\s+de\s+licitar(?:\s+e\s+contratar)?)?|"
+    r"suspens[aã]o(?:\s+tempor[aá]ria)?|"
+    r"declara[cç][aã]o\s+de\s+inidoneidade|"
+    r"inidoneidade|"
+    r"advert[eê]ncia|"
+    r"multa)\b",
+    re.IGNORECASE,
+)
+ATO_JURIDICO_RE = re.compile(r"\b(ceis|cnep|ac[oó]rd[aã]o|senten[cç]a)\b", re.IGNORECASE)
+DATA_ROTULO_RE = re.compile(
+    r"((?:data(?:\s+de)?\s+(?:in[ií]cio|fim|publica[cç][aã]o)|vig[eê]ncia))\s*[:\-]?\s*(\d{2}/\d{2}/20\d{2})",
+    re.IGNORECASE,
+)
+ALCANCE_RE = re.compile(
+    r"(?:alcance|abrang[eê]ncia|[aâ]mbito)\s*[:\-]\s*([^\n.]{3,80})",
+    re.IGNORECASE,
+)
+PROCESSO_RE = re.compile(
+    r"\bprocesso(?:\s+administrativo|\s+judicial)?\s*(?:n[ºo°.]?)?\s*(\d[\d./-]{4,40})",
+    re.IGNORECASE,
+)
+DECISAO_NUM_RE = re.compile(r"(\d{1,6})\s*/\s*(20\d{2})")
+NEGACAO_RE = re.compile(r"\b(nao|sem|inexistente|ausente)\b", re.IGNORECASE)
 
 PALAVRAS_NAO_NOME = {
     "tribunal",
@@ -95,6 +119,7 @@ class Achado:
     papel: str | None = None
     doc: str = ""
     pessoa_ref: str | None = None
+    detalhe: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.span is None or self.span.fim <= self.span.inicio or not self.span.trecho:
@@ -260,6 +285,8 @@ def extrair(caminho: str, texto: str, *, hipotese: bool = False, sal: bytes | No
     _empresas(doc)
     _pessoas(doc)
     _polos(doc)
+    _processos(doc)
+    _decisoes(doc)
     _sancao(doc)
     _exercicio_unidade(doc)
     return doc
@@ -275,6 +302,7 @@ def _adicionar(doc: Documento, tipo: str, valor: str | None, inicio: int, fim: i
             papel=kwargs.get("papel") if isinstance(kwargs.get("papel"), str) else None,
             doc=doc.caminho,
             pessoa_ref=kwargs.get("pessoa_ref") if isinstance(kwargs.get("pessoa_ref"), str) else None,
+            detalhe=kwargs.get("detalhe") if isinstance(kwargs.get("detalhe"), dict) else None,
         )
     )
 
@@ -488,12 +516,135 @@ def _polos(doc: Documento) -> None:
         _adicionar(doc, "polo_em_aberto", polo, inicio, fim, hipotese=False)
 
 
+def _bloco(texto: str, pos: int) -> tuple[int, int]:
+    inicio = texto.rfind("\n\n", 0, pos)
+    inicio = 0 if inicio < 0 else inicio + 2
+    fim = texto.find("\n\n", pos)
+    if fim < 0:
+        fim = len(texto)
+    return inicio, fim
+
+
+def _span_dict(texto: str, inicio: int, fim: int) -> dict[str, object]:
+    return {"inicio": inicio, "fim": fim, "trecho": texto[inicio:fim].strip()[:240]}
+
+
+def _processos(doc: Documento) -> None:
+    vistos: set[str] = set()
+    for match in PROCESSO_RE.finditer(doc.texto):
+        valor = match.group(1).strip(" .")
+        if not valor or valor in vistos:
+            continue
+        vistos.add(valor)
+        _adicionar(doc, "processo", valor, match.start(1), match.end(1), hipotese=False)
+
+
+def _decisoes(doc: Documento) -> None:
+    if doc.tipo not in {"acordao", "sentenca"}:
+        return
+    match = re.search(r"ac[oó]rd[aã]o|senten[cç]a", doc.texto, re.IGNORECASE)
+    if not match:
+        return
+    numero = DECISAO_NUM_RE.search(doc.texto[match.start() : match.start() + 80])
+    identificador = f"{numero.group(1)}/{numero.group(2)}" if numero else doc.tipo
+    _adicionar(
+        doc,
+        "decisao",
+        identificador,
+        match.start(),
+        match.end(),
+        hipotese=False,
+        detalhe={"tipo": doc.tipo},
+    )
+
+
+def _tipo_ato_juridico(token: str) -> str:
+    base = _sem_acento(token).lower()
+    if base.startswith("acord"):
+        return "acordao"
+    if base.startswith("senten"):
+        return "sentenca"
+    return base
+
+
 def _sancao(doc: Documento) -> None:
+    """Sanção exige penalidade, destinatário e ato no texto. CNPJ citado não basta."""
     if doc.tipo not in {"sancao", "acordao", "sentenca"}:
         return
-    for achado in list(doc.achados):
-        if achado.tipo == "cnpj_fornecedor" and achado.valor:
-            _adicionar(doc, "sancao", achado.valor, achado.span.inicio, achado.span.fim, hipotese=False)
+    ato = ATO_JURIDICO_RE.search(doc.texto)
+    if not ato:
+        return
+    vistos: set[tuple[str, str, int]] = set()
+    for match in PENALIDADE_RE.finditer(doc.texto):
+        prefixo = _sem_acento(doc.texto[max(0, match.start() - 30) : match.start()]).lower()
+        if NEGACAO_RE.search(prefixo):
+            continue
+        inicio, fim = _bloco(doc.texto, match.start())
+        cnpjs = [
+            achado
+            for achado in doc.achados
+            if achado.tipo == "cnpj_fornecedor" and achado.valor and inicio <= achado.span.inicio < fim
+        ]
+        if len(cnpjs) != 1 or not cnpjs[0].valor:
+            continue
+        destinatario = cnpjs[0]
+        nomes = [
+            achado
+            for achado in doc.achados
+            if achado.tipo == "razao_social" and achado.valor and inicio <= achado.span.inicio < fim
+        ]
+        penalidade = _sem_acento(re.sub(r"\s+", " ", match.group(1)).strip().lower())
+        chave = (penalidade, destinatario.valor, match.start())
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        proxima = PENALIDADE_RE.search(doc.texto, match.end())
+        fim_pena = fim
+        if proxima is not None and proxima.start() < fim:
+            fim_pena = proxima.start()
+        base = match.start()
+        trecho = doc.texto[base:fim_pena]
+        datas = [
+            {
+                "rotulo": _sem_acento(re.sub(r"\s+", " ", data_match.group(1)).strip().lower()),
+                "valor": data_match.group(2),
+                "span": _span_dict(doc.texto, base + data_match.start(2), base + data_match.end(2)),
+            }
+            for data_match in DATA_ROTULO_RE.finditer(trecho)
+        ]
+        alcances = [
+            {
+                "valor": re.sub(r"\s+", " ", alcance_match.group(1)).strip(" .,-"),
+                "span": _span_dict(doc.texto, base + alcance_match.start(1), base + alcance_match.end(1)),
+            }
+            for alcance_match in ALCANCE_RE.finditer(trecho)
+        ]
+        numero = DECISAO_NUM_RE.search(doc.texto[ato.start() : ato.start() + 80])
+        ato_tipo = _tipo_ato_juridico(ato.group(1))
+        ato_id = f"{numero.group(1)}/{numero.group(2)}" if numero else ato_tipo
+        _adicionar(
+            doc,
+            "sancao",
+            penalidade,
+            match.start(1),
+            match.end(1),
+            hipotese=False,
+            detalhe={
+                "penalidade": penalidade,
+                "destinatario": {
+                    "cnpj": destinatario.valor,
+                    "nome": nomes[0].valor if len(nomes) == 1 else None,
+                    "span": _span_dict(doc.texto, destinatario.span.inicio, destinatario.span.fim),
+                },
+                "ato": {
+                    "tipo": ato_tipo,
+                    "identificador": ato_id,
+                    "span": _span_dict(doc.texto, ato.start(), ato.end()),
+                },
+                "datas": datas,
+                "alcances": alcances,
+            },
+        )
 
 
 def _exercicio_unidade(doc: Documento) -> None:
