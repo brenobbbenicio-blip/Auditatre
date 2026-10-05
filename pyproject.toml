@@ -1,0 +1,26 @@
+[project]
+name = "auditatre"
+version = "0.1.0"
+description = "Ingestor e cruzamento documental do TRE-PA"
+requires-python = ">=3.11"
+dependencies = [
+  "openpyxl>=3.1",
+  "pypdf>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+auditatre = "auditatre.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
