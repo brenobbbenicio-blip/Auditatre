@@ -164,13 +164,13 @@ def executar(inbox: Path, saida: Path, *, max_bytes: int = MAX_BYTES, limites_zi
 def _gravar(
     saida: Path,
     inventario: list[dict[str, object]],
-    matriz: list[dict[str, object]],
+    matriz: dict[str, object],
     lacunas: list[dict[str, object]],
     relatorio: str,
 ) -> None:
     arquivos = {
         "inventario.json": _json(inventario),
-        "matriz.json": _json({"grupos": matriz}),
+        "matriz.json": _json(matriz),
         "lacunas.json": _json(lacunas),
         "relatorio.md": relatorio if relatorio.endswith("\n") else relatorio + "\n",
     }

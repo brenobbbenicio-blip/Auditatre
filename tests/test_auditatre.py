@@ -133,29 +133,56 @@ def test_nao_soma_fases_nem_trata_apostila_como_contrato(tmp_path: Path):
         f"{CNPJ},2025NE000511,\"R$ 15.500,00\",0\n",
         encoding="utf-8",
     )
-    (inbox / "ceis.txt").write_text(f"CEIS\nFornecedor CNPJ {CNPJ} EMPRESA EXEMPLO LTDA.\n", encoding="utf-8")
+    (inbox / "ceis.txt").write_text(
+        "\n".join(
+            [
+                "CEIS",
+                f"Fornecedor CNPJ {CNPJ} EMPRESA EXEMPLO LTDA.",
+                "Penalidade: impedimento de licitar e contratar.",
+            ]
+        ),
+        encoding="utf-8",
+    )
     (inbox / "ata.txt").write_text(
         "Ata de reuniao.\nFiscal do contrato: Ana Paula Nogueira compareceu.\n",
         encoding="utf-8",
     )
     resultado = executar(inbox, tmp_path / "out")
-    grupo = next(item for item in resultado["matriz"] if item["contrato"] == "41/2025")
-    assert grupo["apostila"] is True
-    assert [item["valor"] for item in grupo["fases"]["contrato"]] == ["70000.00"]
-    assert [item["valor"] for item in grupo["fases"]["empenho"]] == ["15500.00"]
-    assert grupo["fases"]["liquidacao"] == []
-    assert grupo["fases"]["pagamento"] == []
+    atos = resultado["matriz"]["atos"]
+    vinculos = resultado["matriz"]["vinculos"]
+    contrato = next(item for item in atos if item["tipo_ato"] == "contrato" and item["identificador"] == "41/2025")
+    empenho = next(item for item in atos if item["tipo_ato"] == "empenho" and item["identificador"] == "2025NE000511")
+    assert contrato["apostila"] is True
+    assert [item["valor"] for item in contrato["fases"]["contrato"]] == ["70000.00"]
+    assert contrato["fases"]["empenho"] == []
+    assert [item["valor"] for item in empenho["fases"]["empenho"]] == ["15500.00"]
+    assert contrato["fases"]["liquidacao"] == []
+    assert contrato["fases"]["pagamento"] == []
+    ligacao = next(
+        item
+        for item in vinculos
+        if item["estado"] == "confirmado"
+        and {item["origem"]["id"], item["destino"]["id"]} == {contrato["id"], empenho["id"]}
+    )
+    assert {evidencia["documento"] for evidencia in ligacao["evidencias"]} == {"contrato.txt", "empenho.txt"}
     assert "31000.00" not in json.dumps(resultado["matriz"])
     assert "19500.00" not in json.dumps(resultado["matriz"])
     assert all(lacuna["valor"] is None for lacuna in resultado["lacunas"] if lacuna["fase"] in {"liquidacao", "pagamento"})
-    assert "maraba" not in grupo["polos_em_aberto"]
-    assert "santarem" in grupo["polos_em_aberto"]
-    assert "belem" in grupo["polos_em_aberto"]
-    assert grupo["sancao"]["cnpj"] == CNPJ
-    assert any(pessoa["papel"] == "ordenador" for pessoa in grupo["pessoas"])
-    hipotese = next(item for item in grupo["hipoteses"] if item["fase"] == "empenho")
+    assert "maraba" not in contrato["polos_em_aberto"]
+    assert "santarem" in contrato["polos_em_aberto"]
+    assert "belem" in contrato["polos_em_aberto"]
+    assert contrato["sancoes"] == []
+    sancao = next(item for item in atos if item["sancoes"])
+    assert sancao["sancoes"][0]["destinatario"]["cnpj"] == CNPJ
+    assert sancao["sancoes"][0]["penalidade"].startswith("impedimento")
+    assert not any(
+        item["estado"] == "confirmado" and {item["origem"]["id"], item["destino"]["id"]} == {contrato["id"], sancao["id"]}
+        for item in vinculos
+    )
+    assert any(pessoa["papel"] == "ordenador" for pessoa in empenho["pessoas"])
+    hipotese = next(item for item in empenho["hipoteses"] if item["fase"] == "empenho")
     assert hipotese["confirmada"] is True
-    assert not any(item["fase"] == "liquidacao" and item["valor"] in {"0", "0.00"} for item in grupo["hipoteses"])
+    assert not any(item["fase"] == "liquidacao" and item["valor"] in {"0", "0.00"} for item in empenho["hipoteses"])
     bruto = json.dumps(resultado, ensure_ascii=False) + resultado["relatorio"]
     assert "111.444.777-35" not in bruto
     assert "777.754" not in bruto
@@ -179,8 +206,8 @@ def test_nome_igual_nao_preenche_sancao_e_planilha_sem_pdf(tmp_path: Path):
         encoding="utf-8",
     )
     resultado = executar(inbox, tmp_path / "out")
-    assert all(grupo["sancao"] is None for grupo in resultado["matriz"])
-    planilha = next(grupo for grupo in resultado["matriz"] if grupo["cnpj"] == CNPJ)
+    assert all(not ato["sancoes"] for ato in resultado["matriz"]["atos"])
+    planilha = next(ato for ato in resultado["matriz"]["atos"] if ato["hipoteses"])
     assert planilha["fases"]["empenho"] == []
     assert planilha["hipoteses"]
     assert planilha["hipoteses"][0]["confirmada"] is False
@@ -197,7 +224,7 @@ def test_cpf_aberto_nao_sai_no_relatorio(tmp_path: Path):
     resultado = executar(inbox, tmp_path / "out")
     assert CPF not in resultado["relatorio"]
     assert CPF not in json.dumps(resultado["matriz"])
-    pessoa = resultado["matriz"][0]["pessoas"][0]
+    pessoa = next(item for ato in resultado["matriz"]["atos"] for item in ato["pessoas"])
     assert pessoa["papel"] == "servidor_folha"
     assert pessoa["pessoa_ref"]
 
