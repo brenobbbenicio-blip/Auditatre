@@ -8,6 +8,7 @@ import secrets
 from pathlib import Path
 
 from auditatre.crosswalk import cruzar
+from auditatre.drive_import import MANAGED, entradas_importadas
 from auditatre.extract import extrair
 from auditatre.leitura import ler_texto
 from auditatre.limits import MAX_BYTES
@@ -36,6 +37,7 @@ def _json(dados: object) -> str:
 def executar(inbox: Path, saida: Path, *, max_bytes: int = MAX_BYTES, limites_zip: LimitesZip | None = None) -> dict[str, object]:
     if not inbox.is_dir():
         raise FileNotFoundError(inbox)
+    origens_drive, importacao_drive = entradas_importadas(inbox)
     saida.mkdir(parents=True, exist_ok=True)
     sal_path = saida / ".pessoa_sal"
     if sal_path.exists():
@@ -96,7 +98,12 @@ def executar(inbox: Path, saida: Path, *, max_bytes: int = MAX_BYTES, limites_zi
             }
         )
 
-    arquivos = sorted(caminho for caminho in inbox.rglob("*") if caminho.is_file() and caminho.name != ".gitkeep")
+    arquivos = sorted(
+        {caminho for caminho in inbox.rglob("*")
+         if caminho.relative_to(inbox).parts[0] != MANAGED
+         and caminho.is_file() and caminho.name != ".gitkeep"}
+        | {inbox / relative for relative in origens_drive}
+    )
     for caminho in arquivos:
         relativo = caminho.relative_to(inbox).as_posix()
         tamanho = caminho.stat().st_size
@@ -155,9 +162,16 @@ def executar(inbox: Path, saida: Path, *, max_bytes: int = MAX_BYTES, limites_zi
 
     matriz, lacunas = cruzar(documentos)
     lacunas = lacunas_arquivo + lacunas
+    for item in inventario:
+        origem = str(item["caminho"]).split("!/", 1)[0]
+        if origem in origens_drive:
+            item["drive"] = origens_drive[origem]
+    if importacao_drive and not importacao_drive["completo"]:
+        lacunas.append({"grupo": "importacao_drive", "fase": "importacao",
+                        "motivo": "importacao Drive parcial; consulte o manifesto", "valor": None})
     inventario.sort(key=lambda item: str(item["caminho"]))
     relatorio = renderizar(inventario, matriz, lacunas)
-    _gravar(saida, inventario, matriz, lacunas, relatorio)
+    _gravar(saida, inventario, matriz, lacunas, relatorio, importacao_drive)
     return {"inventario": inventario, "matriz": matriz, "lacunas": lacunas, "relatorio": relatorio}
 
 
@@ -167,6 +181,7 @@ def _gravar(
     matriz: dict[str, object],
     lacunas: list[dict[str, object]],
     relatorio: str,
+    importacao_drive: dict | None = None,
 ) -> None:
     arquivos = {
         "inventario.json": _json(inventario),
@@ -183,9 +198,12 @@ def _gravar(
             for nome, conteudo in arquivos.items()
         },
         "entradas": [
-            {"bytes": item["bytes"], "caminho": item["caminho"], "sha256": item["sha256"]}
+            {"bytes": item["bytes"], "caminho": item["caminho"], "sha256": item["sha256"],
+             **({"drive": item["drive"]} if "drive" in item else {})}
             for item in inventario
             if item["sha256"] and "!/" not in str(item["caminho"])
         ],
     }
+    if importacao_drive is not None:
+        manifesto["importacao_drive"] = importacao_drive
     (saida / "manifesto.json").write_text(_json(manifesto), encoding="utf-8")

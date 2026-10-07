@@ -10,6 +10,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+drive = ["google-auth[requests]>=2.0"]
 
 [project.scripts]
 auditatre = "auditatre.cli:main"
