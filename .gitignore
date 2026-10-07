@@ -7,3 +7,13 @@ __pycache__/
 .venv/
 dist/
 build/
+# Corpus importado e segredos locais nunca fazem parte do código.
+.auditatre-drive/
+.env
+.env.*
+.secrets/
+credentials*.json
+*.credentials.json
+token*.json
+service-account*.json
+application_default_credentials.json
