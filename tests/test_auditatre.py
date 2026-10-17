@@ -30,7 +30,7 @@ def _cnpj(raiz: str = "112223330001") -> str:
 
 
 CNPJ = _cnpj()
-CPF = "111.444.777-35"
+CPF = "111.444.777-35"  # lgpd-ok: CPF fictício didático
 
 
 def test_cnpj_e_cpf_validos():
@@ -184,7 +184,7 @@ def test_nao_soma_fases_nem_trata_apostila_como_contrato(tmp_path: Path):
     assert hipotese["confirmada"] is True
     assert not any(item["fase"] == "liquidacao" and item["valor"] in {"0", "0.00"} for item in empenho["hipoteses"])
     bruto = json.dumps(resultado, ensure_ascii=False) + resultado["relatorio"]
-    assert "111.444.777-35" not in bruto
+    assert "111.444.777-35" not in bruto  # lgpd-ok: CPF fictício didático
     assert "777.754" not in bruto
     assert "66015-902" not in bruto
     assert "3346-8000" not in bruto

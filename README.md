@@ -134,6 +134,8 @@ python -m pytest
 
 Cobrem zip, deduplicação, PDF sem texto, limite de tamanho, fases, apostila, polo, planilha, sanção, ausência de CPF no relatório e a parada sem inbox. Também cobrem CNPJ comum, nota de empenho sem referência contratual, unidades distintas, combinação sem pareamento, sentença sem penalidade, acórdão que só cita empresa e sanções múltiplas. A suíte Drive usa dados e transporte fictícios para recursão, paginação, exportação, duplicatas, atualizações, falhas parciais, corrupção, limites, caminhos hostis e preservação do modo offline. Os testes não acessam a rede nem precisam de credenciais Google.
 
+O CI (`.github/workflows/ci.yml`) roda a suíte em Python 3.11 e 3.13 e, antes dela, `python tools/lgpd_scan.py`, que falha se algum arquivo versionado tiver CPF válido não mascarado. CPF fictício de teste é liberado com o comentário `lgpd-ok` na mesma linha. O scanner é o mesmo do Fiscal TRE-PA.
+
 ## Layout
 
 - `src/auditatre/cli.py` seleciona importação explícita ou modo offline e para se o inbox não existir.
