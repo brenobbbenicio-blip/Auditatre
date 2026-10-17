@@ -98,7 +98,9 @@ Em `out/`:
 - `matriz.json`: `organizacoes`, `atos` e `vinculos`. Cada fase guarda a própria lista de valores, com documento e span, no ato que a documenta.
 - `lacunas.json`: fase ausente, PDF sem texto, arquivo só catalogado, apostila sem contrato, polo em aberto ou planilha ainda não confirmada. O valor da lacuna fica `null`.
 - `relatorio.md`: o mesmo cruzamento em texto.
-- `manifesto.json`: sha256 das quatro saídas acima e dos arquivos do inbox. Membros internos de zip ficam de fora dessa lista.
+- `fiscal_import.json`: registros prontos para o importador do Fiscal TRE-PA (ver "Exportação ao Fiscal").
+- `lacunas_exportacao.json`: valores de fase que não foram exportados, com ato, documento, fase e motivo.
+- `manifesto.json`: sha256 das seis saídas acima e dos arquivos do inbox. Membros internos de zip ficam de fora dessa lista.
 
 Quando o inbox contém uma importação, o inventário e as entradas do manifesto recebem `drive`, com todos os registros de origem associados aos bytes (também nos membros de ZIP, via arquivo externo). O manifesto de saída guarda o estado completo em `importacao_drive`. Metadados, locks, downloads temporários e objetos históricos não são catalogados como documentos.
 
@@ -126,13 +128,42 @@ Organização, ato e vínculo são registros separados. A chave do ato junta ór
 
 O vínculo `confirmado` exige o mesmo identificador nos dois documentos, com unidade compatível (igual ou ausente nos dois lados) e as duas evidências. `candidato` registra CNPJ comum ou referência incompleta e não copia pagamento, empenho ou liquidação para o contrato. `conflito` cobre unidade divergente, vários alvos para o mesmo identificador, ou vários CNPJs e contratos no mesmo texto sem par na mesma linha. Um documento com um único CNPJ e um único contrato pareia os dois. CNPJ do órgão (contratante ou UG emitente) não vira fornecedor.
 
+## Exportação ao Fiscal
+
+`fiscal_import.json` usa os campos canônicos do importador do Fiscal TRE-PA (`{"formato": "auditatre-fiscal/1", "records": [...]}`) e é importado sem mapeamento de colunas. Cada valor documentado de uma fase vira um registro com um único campo monetário:
+
+| Fase no Auditatre | `kind` | Campo |
+| --- | --- | --- |
+| contrato | `contract` | `contract_value` |
+| empenho | `payment` | `committed` |
+| liquidação | `payment` | `accrued` |
+| pagamento | `payment` | `paid` |
+
+Os demais campos monetários ficam `null`, e o Fiscal os lê como ausentes. Fases não se somam nem se comparam na mesma linha. Um valor só é exportado quando:
+
+- o ato pertence a um grupo com exatamente um fornecedor ligado por `pareamento de cnpj e contrato`. O vínculo de sanção liga o ato ao punido e nunca define fornecedor;
+- esse fornecedor tem uma única razão social documentada, exportada como `supplier`, com o CNPJ em `supplier_id`;
+- o documento do valor não cita CNPJ de fornecedor diferente desse (pagamento que cita o contrato e favorece outra empresa não herda o fornecedor);
+- o exercício do ato é único;
+- nem o ato nem o documento do valor estão em vínculo `conflito`;
+- o valor veio de documento (planilha sem PDF continua hipótese e fica de fora).
+
+O resto vai para `lacunas_exportacao.json`. O mesmo valor repetido no mesmo documento sai uma vez. `record_id` é derivado do ato, da fase, do sha256 do documento e do span, e se repete entre execuções.
+
+Limites conhecidos:
+
+- `source_url` fica vazio, porque cópia de Drive ou arquivo local não é a publicação pública. A âncora vai em `source_page` (`documento:<caminho> | sha256:<hash> | span:<início>-<fim> | drive:<ids>`), e o Fiscal acusa a falta de URL na regra de qualidade de dados. Isso é esperado.
+- `date`, `competence`, `installment` e `object` não são extraídos e ficam `null`.
+- Apostila não tem valor extraído, então não há registro `addendum`.
+- Se nenhum valor fechar, `records` fica vazio e o Fiscal recusa o arquivo. Consulte `lacunas_exportacao.json`.
+
 ## Testes
 
 ```bash
 python -m pytest
 ```
 
-Cobrem zip, deduplicação, PDF sem texto, limite de tamanho, fases, apostila, polo, planilha, sanção, ausência de CPF no relatório e a parada sem inbox. Também cobrem CNPJ comum, nota de empenho sem referência contratual, unidades distintas, combinação sem pareamento, sentença sem penalidade, acórdão que só cita empresa e sanções múltiplas. A suíte Drive usa dados e transporte fictícios para recursão, paginação, exportação, duplicatas, atualizações, falhas parciais, corrupção, limites, caminhos hostis e preservação do modo offline. Os testes não acessam a rede nem precisam de credenciais Google.
+Cobrem zip, deduplicação, PDF sem texto, limite de tamanho, fases, apostila, polo, planilha, sanção, ausência de CPF no relatório e a parada sem inbox. Também cobrem CNPJ comum, nota de empenho sem referência contratual, unidades distintas, combinação sem pareamento, sentença sem penalidade, acórdão que só cita empresa e sanções múltiplas. A suíte de exportação confere um campo monetário por registro, os campos e formatos que o importador do Fiscal exige, o sha256 em `source_page`, `record_id` estável e as recusas: sem fornecedor, dois fornecedores, CNPJ divergente no pagamento, vínculo de sanção, conflito e planilha sem PDF. A suíte Drive usa dados e transporte fictícios para recursão, paginação, exportação, duplicatas, atualizações, falhas parciais, corrupção, limites, caminhos hostis e preservação do modo offline. Os testes não acessam a rede nem precisam de credenciais Google.
 
 O CI (`.github/workflows/ci.yml`) roda a suíte em Python 3.11 e 3.13 e, antes dela, `python tools/lgpd_scan.py`, que falha se algum arquivo versionado tiver CPF válido não mascarado. CPF fictício de teste é liberado com o comentário `lgpd-ok` na mesma linha. O scanner é o mesmo do Fiscal TRE-PA.
 
@@ -146,4 +177,5 @@ O CI (`.github/workflows/ci.yml`) roda a suíte em Python 3.11 e 3.13 e, antes d
 - `src/auditatre/extract.py` extrai chaves e papéis. Endereço e telefone ficam de fora. CPF só vira `pessoa_ref`.
 - `src/auditatre/crosswalk.py` separa organização, ato e vínculo e monta as lacunas, sem somar fases.
 - `src/auditatre/zipsafe.py` abre o zip e aplica os limites.
+- `src/auditatre/fiscal_export.py` converte a matriz nos registros do Fiscal e lista o que não fechou.
 - `src/auditatre/report.py` escreve o relatório e recusa dado pessoal e juízo de conduta.
