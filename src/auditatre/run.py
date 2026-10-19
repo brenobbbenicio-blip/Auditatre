@@ -1,4 +1,4 @@
-"""Percorre o inbox local e grava inventario, matriz, lacunas e manifesto."""
+"""Percorre o inbox local e grava inventario, matriz, lacunas, exportação ao Fiscal e manifesto."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 from auditatre.crosswalk import cruzar
 from auditatre.drive_import import MANAGED, entradas_importadas
 from auditatre.extract import extrair
+from auditatre.fiscal_export import exportar
 from auditatre.leitura import ler_texto
 from auditatre.limits import MAX_BYTES
 from auditatre.report import renderizar
@@ -171,8 +172,10 @@ def executar(inbox: Path, saida: Path, *, max_bytes: int = MAX_BYTES, limites_zi
                         "motivo": "importacao Drive parcial; consulte o manifesto", "valor": None})
     inventario.sort(key=lambda item: str(item["caminho"]))
     relatorio = renderizar(inventario, matriz, lacunas)
-    _gravar(saida, inventario, matriz, lacunas, relatorio, importacao_drive)
-    return {"inventario": inventario, "matriz": matriz, "lacunas": lacunas, "relatorio": relatorio}
+    fiscal, lacunas_exportacao = exportar(matriz, inventario)
+    _gravar(saida, inventario, matriz, lacunas, relatorio, fiscal, lacunas_exportacao, importacao_drive)
+    return {"inventario": inventario, "matriz": matriz, "lacunas": lacunas, "relatorio": relatorio,
+            "fiscal_import": fiscal, "lacunas_exportacao": lacunas_exportacao}
 
 
 def _gravar(
@@ -181,6 +184,8 @@ def _gravar(
     matriz: dict[str, object],
     lacunas: list[dict[str, object]],
     relatorio: str,
+    fiscal: dict[str, object],
+    lacunas_exportacao: list[dict[str, object]],
     importacao_drive: dict | None = None,
 ) -> None:
     arquivos = {
@@ -188,6 +193,8 @@ def _gravar(
         "matriz.json": _json(matriz),
         "lacunas.json": _json(lacunas),
         "relatorio.md": relatorio if relatorio.endswith("\n") else relatorio + "\n",
+        "fiscal_import.json": _json(fiscal),
+        "lacunas_exportacao.json": _json(lacunas_exportacao),
     }
     for nome, conteudo in arquivos.items():
         (saida / nome).write_text(conteudo, encoding="utf-8")

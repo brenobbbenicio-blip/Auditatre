@@ -22,8 +22,9 @@ CONTRATO_RE = re.compile(
 )
 CONTRATO_CT = re.compile(r"\bCT\s*[-_]?\s*0*(\d{1,5})\s*[/_-]\s*(\d{4})", re.IGNORECASE)
 VALOR_RE = re.compile(r"R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})")
+# O lookbehind impede que a razão social comece no meio de um CNPJ ("0001-81 ALFA LTDA").
 EMPRESA_RE = re.compile(
-    r"([A-ZÁÉÍÓÚÃÕÇ0-9&][A-ZÁÉÍÓÚÃÕÇ0-9& .'\-]{2,80}?"
+    r"(?<![\w/.\-])([A-ZÁÉÍÓÚÃÕÇ0-9&][A-ZÁÉÍÓÚÃÕÇ0-9& .'\-]{2,80}?"
     r"(?:LTDA|S\.A\.|S/A|EIRELI|EPP|ME))\b"
 )
 PAPEL_LINHA = re.compile(
